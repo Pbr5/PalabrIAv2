@@ -1,5 +1,6 @@
 # backend/model.py
 import gc
+import os
 import re
 import time
 import threading
@@ -164,13 +165,15 @@ def _load_impl():
         _set(20, "Preparando configuración del modelo…")
 
         _set(40, "Cargando tokenizer…")
-        _tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, use_fast=True)
+        _hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        _tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, use_fast=True, token=_hf_token)
         if _tokenizer.pad_token is None:
             _tokenizer.pad_token = _tokenizer.eos_token
 
         _set(75, "Cargando modelo (esto puede tardar)…")
         _model = AutoModelForCausalLM.from_pretrained(
             MODEL_ID,
+            token=_hf_token,
             device_map="auto",
             torch_dtype=torch.bfloat16,   # bfloat16 completo — más rápido que NF4 en A100
         )
@@ -543,6 +546,94 @@ def _mensaje_superado(adapt) -> str:
         return f"Has dejado de cometer {sup[0]}, que antes se repetía en tus textos. ¡Buen trabajo!"
     return "Has dejado de cometer errores que antes se repetían (" + ", ".join(sup) + "). ¡Buen trabajo!"
 
+
+# ── Práctica por IA (explicación y ejemplo fijos; ejercicio por IA) ─────────────
+# Explicación y ejemplo son fijos (correctos). Solo el ejercicio lo genera el modelo.
+MAX_NEW_TOKENS_EJERCICIO = 70
+
+_NOMBRE_FENOMENO = {
+    "tu": "'tú' impersonal",
+    "marcadores": "marcadores discursivos pareados",
+    "dequeismo": "dequeísmo",
+    "gerundio": "gerundio de posterioridad",
+}
+_NOMBRE_A_ID = {
+    "'Tú' impersonal": "tu",
+    "Marcadores discursivos": "marcadores",
+    "Dequeísmo (preposiciones)": "dequeismo",
+    "Gerundio de posterioridad": "gerundio",
+}
+_REGLA_FENOMENO = {
+    "tu": "El 'tú' impersonal usa la segunda persona del singular con valor general; en registro formal se prefiere la construcción impersonal con 'se' (p. ej. 'si analizas' -> 'si se analiza').",
+    "marcadores": "Los marcadores discursivos correlativos van en pareja: si se abre uno ('por un lado'), se cierra con su pareja ('por otro lado'), sin mezclar familias.",
+    "dequeismo": "El dequeísmo es usar 'de que' tras verbos de opinión o declaración que no rigen 'de' ('pienso de que' -> 'pienso que').",
+    "gerundio": "El gerundio de posterioridad expresa una acción posterior a la del verbo principal y es incorrecto en registro formal; se sustituye por 'y' + verbo conjugado ('firmó el acta, entregándola' -> 'firmó el acta y la entregó').",
+}
+
+_EXPLICACION_FENOMENO = {
+    "tu": "El 'tú' impersonal usa la segunda persona del singular con valor general. En registro formal se prefiere la construcción impersonal con 'se'.",
+    "marcadores": "Los marcadores correlativos van en pareja: si abres uno ('por un lado'), tienes que cerrarlo con su pareja ('por otro lado').",
+    "dequeismo": "El dequeísmo es usar 'de que' con verbos que solo rigen 'que' (verbos de opinión o declaración). Lo correcto es 'que': 'pienso que', no 'pienso de que'.",
+    "gerundio": "El gerundio de posterioridad expresa una acción posterior a la del verbo principal y es incorrecto en registro formal; se sustituye por 'y' + verbo conjugado.",
+}
+_EJEMPLO_FENOMENO = {
+    "tu": "Incorrecto: 'Cuando analizas, debes revisar.' -> Correcto: 'Cuando se analiza, se debe revisar.'",
+    "marcadores": "Incorrecto: 'Por un lado, el método es válido.' (sin cierre) -> Correcto: 'Por un lado, el método es válido; por otro lado, tiene límites.'",
+    "dequeismo": "Incorrecto: 'Pienso de que es cierto.' -> Correcto: 'Pienso que es cierto.'",
+    "gerundio": "Incorrecto: 'Firmó el acta, entregándola después.' -> Correcto: 'Firmó el acta y la entregó después.'",
+}
+
+SYSTEM_PROMPT_EJERCICIO = (
+    "Eres un tutor de español. Escribe UNA sola frase breve que CONTENGA el error indicado, "
+    "para que un estudiante la corrija. No des la solución, no expliques, no uses asteriscos "
+    "ni markdown ni viñetas. Devuelve solo la frase."
+)
+USER_PROMPT_EJERCICIO = (
+    "Error que debe contener la frase: {fenomeno}. Regla: {regla}. "
+    "Ejemplo de frase con el error: {ejemplo}. "
+    "Escribe una frase NUEVA y distinta que contenga ese error. Nivel: {nivel}."
+)
+
+
+def _limpiar_ia(text) -> str:
+    """Quita markdown y se queda con la primera frase limpia."""
+    text = re.sub(r"[*#`>_]", "", text or "").strip()
+    primera = text.splitlines()[0].strip() if text else ""
+    return primera.strip(" \"'-")
+
+
+def generar_ejercicio_ia(fenom_id, nivel) -> str:
+    """Solo el ejercicio: una frase con el error, generada por el modelo, según el nivel."""
+    if not MODEL_LOADED or fenom_id not in _REGLA_FENOMENO:
+        return ""
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT_EJERCICIO},
+        {"role": "user", "content": USER_PROMPT_EJERCICIO.format(
+            fenomeno=_NOMBRE_FENOMENO[fenom_id],
+            regla=_REGLA_FENOMENO[fenom_id],
+            ejemplo=_EJEMPLO_FENOMENO[fenom_id],
+            nivel=nivel or "intermedio",
+        )},
+    ]
+    return _limpiar_ia(_chat_generate(messages, max_new_tokens=MAX_NEW_TOKENS_EJERCICIO))
+
+
+def _bloque_practica(adapt) -> str:
+    """Práctica del foco: explicación y ejemplo fijos + ejercicio por IA."""
+    adapt = adapt or {}
+    fid = _NOMBRE_A_ID.get(adapt.get("foco"))
+    if not fid:
+        return ""
+    partes = [
+        "Para practicar (" + _NOMBRE_FENOMENO[fid] + "):",
+        _EXPLICACION_FENOMENO[fid],
+        _EJEMPLO_FENOMENO[fid],
+    ]
+    ej = generar_ejercicio_ia(fid, adapt.get("nivel"))
+    if ej:
+        partes.append("Ejercicio (corrige la frase): " + ej)
+    return "\n".join(partes)
+
 # ── Feedback por documento ─────────────────────────────────────────────────────
 
 def _nota_marcadores(marcadores, adapt=None) -> str:
@@ -592,6 +683,7 @@ def generate_feedback(original: str, corrected: str, n_errores: int = 0, marcado
 
     cierre = _cierre_adaptativo(adapt)
     superado = _mensaje_superado(adapt)
+    practica = _bloque_practica(adapt)
 
     if n_errores == 0:
         extras = [n for n in (_nota_marcadores(marcadores, adapt), _nota_dequeismo(dequeismo, adapt), _nota_gerundio(gerundio, adapt)) if n]
@@ -607,6 +699,8 @@ def generate_feedback(original: str, corrected: str, n_errores: int = 0, marcado
             fb = fb.rstrip() + "\n\n" + superado
         if cierre:
             fb = fb.rstrip() + "\n\n" + cierre
+        if practica:
+            fb = fb.rstrip() + "\n\n" + practica
         return fb
 
     from backend.utils import split_into_sentences
@@ -642,6 +736,8 @@ def generate_feedback(original: str, corrected: str, n_errores: int = 0, marcado
         fb = (fb or "").rstrip() + "\n\n" + superado
     if cierre:
         fb = (fb or "").rstrip() + "\n\n" + cierre
+    if practica:
+        fb = (fb or "").rstrip() + "\n\n" + practica
     return fb
 
 
