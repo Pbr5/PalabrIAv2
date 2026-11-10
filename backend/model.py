@@ -584,15 +584,40 @@ _EJEMPLO_FENOMENO = {
     "gerundio": "Incorrecto: 'Firmó el acta, entregándola después.' -> Correcto: 'Firmó el acta y la entregó después.'",
 }
 
+# Ejemplos few-shot: frases naturales con UN solo error, para guiar la generación.
+_EJERCICIOS_FEWSHOT = {
+    "tu": [
+        "Cuando estudias para un examen, debes descansar bien.",
+        "Si te esfuerzas cada día, consigues mejores resultados.",
+        "Cuando escribes un correo formal, tienes que revisarlo antes de enviarlo.",
+    ],
+    "marcadores": [
+        "Por un lado, la propuesta reduce los costes del proyecto.",
+        "Por una parte, el nuevo método es más rápido.",
+        "En primer lugar, conviene definir bien los objetivos.",
+    ],
+    "dequeismo": [
+        "Pienso de que el examen será muy difícil.",
+        "Opino de que deberíamos empezar antes.",
+        "El profesor comentó de que la entrega era el lunes.",
+    ],
+    "gerundio": [
+        "El director firmó el contrato, anunciándolo al día siguiente.",
+        "La empresa lanzó el producto, retirándolo pocos meses después.",
+        "La autora terminó la novela, publicándola un año más tarde.",
+    ],
+}
+
 SYSTEM_PROMPT_EJERCICIO = (
-    "Eres un tutor de español. Escribe UNA sola frase breve que CONTENGA el error indicado, "
-    "para que un estudiante la corrija. No des la solución, no expliques, no uses asteriscos "
-    "ni markdown ni viñetas. Devuelve solo la frase."
+    "Eres un tutor de español. Escribe UNA frase de práctica: una oración natural y con sentido "
+    "que contenga UNA sola vez el error indicado, para que un estudiante lo corrija. "
+    "Imita el estilo de los ejemplos. No expliques, no des la solución, no uses markdown. "
+    "Devuelve solo la frase."
 )
 USER_PROMPT_EJERCICIO = (
-    "Error que debe contener la frase: {fenomeno}. Regla: {regla}. "
-    "Ejemplo de frase con el error: {ejemplo}. "
-    "Escribe una frase NUEVA y distinta que contenga ese error. Nivel: {nivel}."
+    "Tipo de error: {fenomeno}.\n"
+    "Ejemplos de frases con ese error:\n{ejemplos}\n"
+    "Escribe UNA frase nueva y distinta a los ejemplos, con ese mismo error. Nivel: {nivel}."
 )
 SYSTEM_PROMPT_SOLUCION = (
     "Eres un tutor de español. Corrige la frase aplicando solo la regla indicada. "
@@ -610,37 +635,27 @@ def _limpiar_ia(text) -> str:
     return primera.strip(" \"'-")
 
 
-def _parse_ej_sol(text):
-    """Separa 'Ejercicio:' y 'Solución:' de la salida del modelo."""
-    text = re.sub(r"[*#`>_]", "", text or "")
-    ej = sol = ""
-    for line in text.splitlines():
-        s = line.strip()
-        if ":" not in s:
-            continue
-        val = s.split(":", 1)[1].strip(" \"'-")
-        low = s.lower()
-        if low.startswith("ejercicio"):
-            ej = val
-        elif low.startswith("soluci"):
-            sol = val
-    return ej, sol
-
-
 def generar_ejercicio_ia(fenom_id, nivel):
-    """Ejercicio (frase con error) y su solución, generados por el modelo."""
+    """Ejercicio (frase con error) y su solución, generados por el modelo en dos pasos."""
     if not MODEL_LOADED or fenom_id not in _REGLA_FENOMENO:
         return "", ""
-    messages = [
+    msg_ej = [
         {"role": "system", "content": SYSTEM_PROMPT_EJERCICIO},
         {"role": "user", "content": USER_PROMPT_EJERCICIO.format(
             fenomeno=_NOMBRE_FENOMENO[fenom_id],
-            regla=_REGLA_FENOMENO[fenom_id],
-            ejemplo=_EJEMPLO_FENOMENO[fenom_id],
+            ejemplos="\n".join("- " + e for e in _EJERCICIOS_FEWSHOT[fenom_id]),
             nivel=nivel or "intermedio",
         )},
     ]
-    return _parse_ej_sol(_chat_generate(messages, max_new_tokens=MAX_NEW_TOKENS_EJERCICIO))
+    ej = _limpiar_ia(_chat_generate(msg_ej, max_new_tokens=MAX_NEW_TOKENS_EJERCICIO))
+    if not ej:
+        return "", ""
+    msg_sol = [
+        {"role": "system", "content": SYSTEM_PROMPT_SOLUCION},
+        {"role": "user", "content": USER_PROMPT_SOLUCION.format(regla=_REGLA_FENOMENO[fenom_id], frase=ej)},
+    ]
+    sol = _limpiar_ia(_chat_generate(msg_sol, max_new_tokens=MAX_NEW_TOKENS_EJERCICIO))
+    return ej, sol
 
 
 def _bloque_practica(adapt) -> str:
