@@ -548,8 +548,8 @@ def _mensaje_superado(adapt) -> str:
 
 
 # ── Práctica por IA (explicación y ejemplo fijos; ejercicio y solución por IA) ──
-# Explicación y ejemplo son fijos (correctos). El modelo genera ejercicio y solución.
-MAX_NEW_TOKENS_EJERCICIO = 130
+# Explicación y ejemplo son fijos (correctos). El modelo genera el ejercicio y luego lo corrige.
+MAX_NEW_TOKENS_EJERCICIO = 70
 MARCA_SOLUCION = "[[SOLUCION]]"  # separador interno: la app oculta la solución tras un desplegable
 
 _NOMBRE_FENOMENO = {
@@ -585,15 +585,21 @@ _EJEMPLO_FENOMENO = {
 }
 
 SYSTEM_PROMPT_EJERCICIO = (
-    "Eres un tutor de español. Crea un ejercicio breve. Devuelve EXACTAMENTE dos líneas, "
-    "sin markdown ni viñetas:\n"
-    "Ejercicio: una frase que CONTENGA el error indicado.\n"
-    "Solución: esa misma frase ya corregida."
+    "Eres un tutor de español. Escribe UNA sola frase breve que CONTENGA el error indicado, "
+    "para que un estudiante la corrija. No des la solución, no expliques, no uses asteriscos "
+    "ni markdown ni viñetas. Devuelve solo la frase."
 )
 USER_PROMPT_EJERCICIO = (
     "Error que debe contener la frase: {fenomeno}. Regla: {regla}. "
     "Ejemplo de frase con el error: {ejemplo}. "
-    "Crea una frase NUEVA y distinta, y su corrección. Nivel: {nivel}."
+    "Escribe una frase NUEVA y distinta que contenga ese error. Nivel: {nivel}."
+)
+SYSTEM_PROMPT_SOLUCION = (
+    "Eres un tutor de español. Corrige la frase aplicando solo la regla indicada. "
+    "No expliques, no uses markdown. Devuelve solo la frase corregida."
+)
+USER_PROMPT_SOLUCION = (
+    "Regla: {regla}. Frase a corregir: {frase}"
 )
 
 
