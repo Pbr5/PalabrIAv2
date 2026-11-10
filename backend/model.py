@@ -547,9 +547,10 @@ def _mensaje_superado(adapt) -> str:
     return "Has dejado de cometer errores que antes se repetían (" + ", ".join(sup) + "). ¡Buen trabajo!"
 
 
-# ── Práctica por IA (explicación y ejemplo fijos; ejercicio por IA) ─────────────
-# Explicación y ejemplo son fijos (correctos). Solo el ejercicio lo genera el modelo.
-MAX_NEW_TOKENS_EJERCICIO = 70
+# ── Práctica por IA (explicación y ejemplo fijos; ejercicio y solución por IA) ──
+# Explicación y ejemplo son fijos (correctos). El modelo genera ejercicio y solución.
+MAX_NEW_TOKENS_EJERCICIO = 130
+MARCA_SOLUCION = "[[SOLUCION]]"  # separador interno: la app oculta la solución tras un desplegable
 
 _NOMBRE_FENOMENO = {
     "tu": "'tú' impersonal",
@@ -584,14 +585,15 @@ _EJEMPLO_FENOMENO = {
 }
 
 SYSTEM_PROMPT_EJERCICIO = (
-    "Eres un tutor de español. Escribe UNA sola frase breve que CONTENGA el error indicado, "
-    "para que un estudiante la corrija. No des la solución, no expliques, no uses asteriscos "
-    "ni markdown ni viñetas. Devuelve solo la frase."
+    "Eres un tutor de español. Crea un ejercicio breve. Devuelve EXACTAMENTE dos líneas, "
+    "sin markdown ni viñetas:\n"
+    "Ejercicio: una frase que CONTENGA el error indicado.\n"
+    "Solución: esa misma frase ya corregida."
 )
 USER_PROMPT_EJERCICIO = (
     "Error que debe contener la frase: {fenomeno}. Regla: {regla}. "
     "Ejemplo de frase con el error: {ejemplo}. "
-    "Escribe una frase NUEVA y distinta que contenga ese error. Nivel: {nivel}."
+    "Crea una frase NUEVA y distinta, y su corrección. Nivel: {nivel}."
 )
 
 
@@ -602,10 +604,27 @@ def _limpiar_ia(text) -> str:
     return primera.strip(" \"'-")
 
 
-def generar_ejercicio_ia(fenom_id, nivel) -> str:
-    """Solo el ejercicio: una frase con el error, generada por el modelo, según el nivel."""
+def _parse_ej_sol(text):
+    """Separa 'Ejercicio:' y 'Solución:' de la salida del modelo."""
+    text = re.sub(r"[*#`>_]", "", text or "")
+    ej = sol = ""
+    for line in text.splitlines():
+        s = line.strip()
+        if ":" not in s:
+            continue
+        val = s.split(":", 1)[1].strip(" \"'-")
+        low = s.lower()
+        if low.startswith("ejercicio"):
+            ej = val
+        elif low.startswith("soluci"):
+            sol = val
+    return ej, sol
+
+
+def generar_ejercicio_ia(fenom_id, nivel):
+    """Ejercicio (frase con error) y su solución, generados por el modelo."""
     if not MODEL_LOADED or fenom_id not in _REGLA_FENOMENO:
-        return ""
+        return "", ""
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT_EJERCICIO},
         {"role": "user", "content": USER_PROMPT_EJERCICIO.format(
@@ -615,11 +634,11 @@ def generar_ejercicio_ia(fenom_id, nivel) -> str:
             nivel=nivel or "intermedio",
         )},
     ]
-    return _limpiar_ia(_chat_generate(messages, max_new_tokens=MAX_NEW_TOKENS_EJERCICIO))
+    return _parse_ej_sol(_chat_generate(messages, max_new_tokens=MAX_NEW_TOKENS_EJERCICIO))
 
 
 def _bloque_practica(adapt) -> str:
-    """Práctica del foco: explicación y ejemplo fijos + ejercicio por IA."""
+    """Práctica del foco: explicación y ejemplo fijos + ejercicio y solución por IA."""
     adapt = adapt or {}
     fid = _NOMBRE_A_ID.get(adapt.get("foco"))
     if not fid:
@@ -629,10 +648,13 @@ def _bloque_practica(adapt) -> str:
         _EXPLICACION_FENOMENO[fid],
         _EJEMPLO_FENOMENO[fid],
     ]
-    ej = generar_ejercicio_ia(fid, adapt.get("nivel"))
+    ej, sol = generar_ejercicio_ia(fid, adapt.get("nivel"))
     if ej:
         partes.append("Ejercicio (corrige la frase): " + ej)
-    return "\n".join(partes)
+    texto = "\n".join(partes)
+    if ej and sol:
+        texto += "\n" + MARCA_SOLUCION + sol
+    return texto
 
 # ── Feedback por documento ─────────────────────────────────────────────────────
 

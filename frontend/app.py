@@ -1655,6 +1655,13 @@ def main_app():
                     except Exception:
                         pass  # si el backend no responde, simplemente no mostrar nada aún
 
+            # La solución del ejercicio se oculta tras un desplegable ("spoiler").
+            solucion_ej = ""
+            if feedback_text and "[[SOLUCION]]" in feedback_text:
+                feedback_text, solucion_ej = feedback_text.split("[[SOLUCION]]", 1)
+                feedback_text = feedback_text.rstrip()
+                solucion_ej = solucion_ej.strip()
+
             st.text_area(
                 label="feedback_modelo_label",
                 value=feedback_text or "",
@@ -1663,6 +1670,10 @@ def main_app():
                 label_visibility="collapsed",
                 key=f"__readonly_feedback_v{_doc_v}",
             )
+
+            if solucion_ej:
+                with st.expander("Ver solución del ejercicio", expanded=False):
+                    st.write(solucion_ej)
 
             rule()
             section("✎", "Edita tu versión final")
